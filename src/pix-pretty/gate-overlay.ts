@@ -389,7 +389,15 @@ export function showOverlay(
 						finish({ action: "approved", password: pw, choice: pickedChoice });
 						return;
 					}
-					if (!pw.trim() || validatingPassword) return;
+					if (validatingPassword) return;
+					// An empty submit used to be a silent no-op. Right after a rejected
+					// attempt the field is cleared, so pressing enter again looked like
+					// a dead overlay. Say what is missing instead.
+					if (!pw.trim()) {
+						passwordStatus = "Password required — type it and press enter (esc cancels)";
+						tui.requestRender();
+						return;
+					}
 
 					validatingPassword = true;
 					passwordStatus = "Checking password…";
@@ -408,7 +416,9 @@ export function showOverlay(
 						return;
 					}
 					maskedInput.setValue("");
-					passwordStatus = `Incorrect password — attempt ${passwordAttempts} of ${maxAttempts}`;
+					passwordStatus =
+						`Incorrect password — attempt ${passwordAttempts} of ${maxAttempts}. ` +
+						`Retype and press enter (esc cancels).`;
 					tui.requestRender();
 				};
 				maskedInput.onEscape = () => {

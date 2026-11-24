@@ -228,7 +228,7 @@ truncation, collapsed rendering — is preserved.
 
 ## Tested in
 
-**omp 19.1.1** (2026-11-24, `0.3.31-omp.5`):
+**omp 19.1.1** (2026-11-24, `0.3.31-omp.6`):
 
 - Type gate: `bunx tsc --noEmit` against the pinned `@oh-my-pi/*@19.1.1`
   declarations → **0 errors**. This is the API contract, not a claim — three
@@ -291,6 +291,24 @@ The grant is deliberately narrow (`src/grant.ts`):
 
 Overlay plumbing: `OverlayResult.choice` + `approveValues` let one approval
 carry a scope, so "Allow once" and "Allow for 15 min" stay distinguishable.
+
+## 0.3.31-omp.6 — wrong-password feedback
+
+Reported as "no interaction when the password is wrong". The rejection message
+was rendered, but the field is cleared on failure, so pressing enter again (or
+simply hitting enter twice) was a **silent no-op** — indistinguishable from a
+dead overlay. Two fixes in `gate-overlay.ts`:
+
+- empty submit now prints `Password required — type it and press enter (esc cancels)`
+  and stays on the password stage;
+- the rejection line now reads
+  `Incorrect password — attempt 1 of 3. Retype and press enter (esc cancels).`
+
+Both are covered by `test/overlay.test.ts`, which drives the real overlay
+component through `ui.custom`/`handleInput` and asserts on rendered lines:
+rejection keeps the modal open with the counter, retyping renders masked
+bullets, empty submit gives feedback, the attempt cap ends as exhausted, and a
+correct password approves once.
 
 ## 0.3.31-omp.5 — grant follows the sudo ticket
 
@@ -393,7 +411,7 @@ omp loads it from a store path via `~/.omp/agent/config.yml`:
 
 ```nix
 # nixos_data/flake.nix inputs:
-omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.5";
+omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.6";
 # nixos_data/omp-pix-sudo.nix: home-manager writes config.yml with
 #   extensions: [ "${inputs.omp-pix-sudo.packages.<system>.default}/share/omp-pix-sudo/src/index.ts" ]
 ```
@@ -406,7 +424,7 @@ in nixos_data).
 From Git (manual, legacy):
 
 ```bash
-omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.5
+omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.6
 ```
 
 Use an immutable tag or commit for reproducible installs — the release tag
