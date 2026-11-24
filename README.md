@@ -242,26 +242,22 @@ truncation, collapsed rendering — is preserved.
   `checks.omp-pix-sudo-load` (paired: control run must NOT list it).
 - Print mode → the tool returns `isError: true` with `errorKind: "no-ui"`,
   confirming the non-interactive guard.
+- **TUI overlay pass** (real terminal, same day): Allow/Deny modal renders,
+  masked password input accepts keystrokes and validates, first `sudo_run id`
+  returns `uid=0(root)`, an immediate repeat still shows Allow but skips the
+  password, and after `sudo -K` the password prompt comes back. The
+  60-second dead-man's switch and the collapsed result row were present too.
 
 Earlier: verified 2026-10-02 against omp 18.4.10 (`omp plugin link` exit 0, no
 loader error) and 2026-10-03 against omp 18.4.11 (**0.3.31-omp.2** below).
 
-**Still not exercised — open gap:** the TUI overlay path (the `SelectList`
-approval list, the masked password prompt, PAM-ticket reuse and the
-dead-man's-switch countdown) has **not** been driven against a real terminal
-since the omp.3 refactor. The renderer and result-shaping paths are type- and
-test-covered, but drawing the overlay and typing a password into it need one
-manual TUI pass: in a TUI session ask the agent to `sudo_run id` → password
-once → `uid=0(root)` → immediate repeat skips the password but still shows
-Allow → **`sudo -K`** then repeat prompts for the password again.
-
-Use uppercase `-K`, not `-k`: with `timestamp_type=ppid` (what nixos_data
-pins) the credential cache is keyed by `u.ppid` (`sudoers_timestamp(5)`), and
-lowercase `-k` only resets "the current session" — the shell's own record —
-leaving the omp process's ticket intact. Observed: `-k` in a terminal did not
-make the next `sudo_run` ask for a password. `-K` removes every cached
-credential for the user regardless of ppid (`man sudo`), which is the reset
-this checklist needs.
+Ticket reset needs uppercase **`sudo -K`**: with `timestamp_type=ppid` (what
+nixos_data pins) the credential cache is keyed by `u.ppid`
+(`sudoers_timestamp(5)`), and lowercase `-k` only resets "the current session"
+— the calling shell's own record — leaving the omp process's ticket intact.
+Observed: `-k` in a terminal did not make the next `sudo_run` ask for a
+password; `-K` removes every cached credential for the user regardless of
+ppid (`man sudo`) and does.
 
 ## 0.3.31-omp.3 — host-version gate, dead code, NixOS integration
 

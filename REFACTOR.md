@@ -633,13 +633,20 @@ specialisation、pam_faillock、tag_pins 自动 bump。本方案不碰这些边�
 
 ## 7. 未验证项（诚实清单，按定稿更新）
 
-1. **TUI 端到端**：Allow 弹层、密码输入、倒计时、`withAgentBlock` 在 omp 19.1.1 上的
-   `events.emit("pix:agent-state", …)` 是否被宿主接受 —— 全部 `[待实测]`（P2 阶段做）。
-2. 有票据时是否仍弹 Allow（按代码是，需肉眼确认，见 §1.5）。
-3. `renderShell: "self"` 在 omp 上无效（earendil 有、omp 18.4.10/19.1.1 都没有）；删掉后卡片边框是否变化需 TUI 对比一次。
+1. ~~**TUI 端到端**：Allow 弹层、密码输入、倒计时、`withAgentBlock` 在 omp 19.1.1 上的
+   `events.emit("pix:agent-state", …)` 是否被宿主接受~~ —— **2026-11-24 实测通过**：
+   Allow/Deny 弹层渲染、遮罩密码输入与校验、`uid=0(root)`、倒计时存在、
+   `withAgentBlock` 的 blocked 状态未报错。
+2. ~~有票据时是否仍弹 Allow~~ —— **实测：仍弹**（与 §1.5 的代码判断一致）。
+3. `renderShell: "self"` 在 omp 上无效（earendil 有、omp 18.4.10/19.1.1 都没有）；删掉后卡片边框是否变化需 TUI 对比一次 —— **实测：卡片正常渲染（全宽规则 + 折叠行），无异常**。
 4. ~~omp 宿主是否可能通过 `ExtensionAPI` 暴露 approvalMode~~ —— **已定稿：无需查**。
    yolo/afk 直接删除，不做「接宿主 approvalMode」路线（§1.5）。
-5. Nix 沙箱里 omp 的静默退出行为（§5.3 的配对检查已规避，但值得在 CI 里跑一次确认）。
+5. Nix 沙箱里 omp 的静默退出行为（§5.3 的配对检查已规避，但值得在 CI 里跑一次确认）——
+   **已在 `checks.omp-pix-sudo-load` 里跑过多次**：假 HOME + `--plugin-dir` 确实会静默
+   exit 0，配对检查按预期改为断言注册表清单。
+6. **票据清理命令**：定稿写的是 `sudo -k`，**错**。`timestamp_type=ppid` 下记录 key 是
+   `u.ppid`（`sudoers_timestamp(5)`），`-k` 只清调用者自己那条；必须用 `sudo -K`
+   （清该用户全部缓存凭证）。2026-11-24 TUI 实测：`-k` 后仍免密码，`-K` 后才重新要密码。
 
 ---
 
