@@ -253,7 +253,15 @@ since the omp.3 refactor. The renderer and result-shaping paths are type- and
 test-covered, but drawing the overlay and typing a password into it need one
 manual TUI pass: in a TUI session ask the agent to `sudo_run id` → password
 once → `uid=0(root)` → immediate repeat skips the password but still shows
-Allow → `sudo -k` then repeat prompts for the password again.
+Allow → **`sudo -K`** then repeat prompts for the password again.
+
+Use uppercase `-K`, not `-k`: with `timestamp_type=ppid` (what nixos_data
+pins) the credential cache is keyed by `u.ppid` (`sudoers_timestamp(5)`), and
+lowercase `-k` only resets "the current session" — the shell's own record —
+leaving the omp process's ticket intact. Observed: `-k` in a terminal did not
+make the next `sudo_run` ask for a password. `-K` removes every cached
+credential for the user regardless of ppid (`man sudo`), which is the reset
+this checklist needs.
 
 ## 0.3.31-omp.3 — host-version gate, dead code, NixOS integration
 

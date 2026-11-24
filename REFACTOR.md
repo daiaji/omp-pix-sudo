@@ -329,7 +329,7 @@ nixos-rebuild。若以后给 `security.pam.services.sudo` 加 fprintd/u2f，
   `justfile`（`verify` 三步变**四步**，带上 `omp-pix-sudo-load`）。
 - **定稿（grilling 确认）**：`omp-pix-sudo` **不**加进 justfile 的 `tag_pins`
   （releases/latest 自动 bump）——插件升级必须与 omp 宿主版本人工核对，不适合自动追新。
-- 回滚：改 flake input 的 tag 或 `extensions` 行 → switch；已拿到的票据 `sudo -k` 清掉。
+- 回滚：改 flake input 的 tag 或 `extensions` 行 → switch；已拿到的票据用 `sudo -K` 清掉（大写；小写 `-k` 只清调用者自己那条 ppid 记录，清不掉 omp 的）。
 - 卸载：删 input 行；`~/.omp/plugins` 里旧的 curl 安装可以删（并注意 §1.1 的 XDG 陷阱：
   删之前确认没有 `~/.local/share/omp`）。
 
