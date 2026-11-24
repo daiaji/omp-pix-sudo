@@ -228,7 +228,7 @@ truncation, collapsed rendering — is preserved.
 
 ## Tested in
 
-**omp 19.1.1** (2026-11-24, `0.3.31-omp.4`):
+**omp 19.1.1** (2026-11-24, `0.3.31-omp.5`):
 
 - Type gate: `bunx tsc --noEmit` against the pinned `@oh-my-pi/*@19.1.1`
   declarations → **0 errors**. This is the API contract, not a claim — three
@@ -247,11 +247,12 @@ truncation, collapsed rendering — is preserved.
   `sudo_run id` returns `uid=0(root)`, an immediate repeat still shows Allow but
   skips the password, and after `sudo -K` the password prompt comes back. The
   60-second dead-man's switch and the collapsed result row were present too.
-- **Session grant** (`0.3.31-omp.4`): unit-tested window/expiry/revoke
-  (`test/grant.test.ts`); the three-choice overlay and the "grant skips confirm,
-  password still governed by the sudo ticket" path need the same manual TUI
-  pass — pick "Allow for 15 min" once, confirm the following `sudo_run` calls
-  show no modal, then `sudo -K` and confirm the password prompt returns.
+- **Session grant** (`0.3.31-omp.5`): unit-tested window/expiry/rolling/revoke
+  and the grant-follows-ticket rule (`test/grant.test.ts`). Manual TUI results:
+  the three-choice overlay renders, "Allow for 15 min" starts the window, and
+  the window skips the modal — **but the 0.3.31-omp.4 build kept the grant after
+  `sudo -K` (option disappeared from the re-prompt); 0.3.31-omp.5 fixes that and
+  needs one more manual pass**.
 
 Earlier: verified 2026-10-02 against omp 18.4.10 (`omp plugin link` exit 0, no
 loader error) and 2026-10-03 against omp 18.4.11 (**0.3.31-omp.2** below).
@@ -281,15 +282,30 @@ The grant is deliberately narrow (`src/grant.ts`):
 - each command executed under the grant extends the window (rolling, matching
   sudo's default `timestamp_timeout` semantics);
 - **it never widens authentication** — `hasValidTicket()` still runs on every
-  call, so `sudo -K` or ticket expiry brings the password prompt back while the
-  grant is live. The grant only removes the per-command *confirmation*;
+  call, and the grant is *subordinate* to the ticket: when the ticket is gone
+  the grant is revoked too (see 0.3.31-omp.5);
 - nothing is written to disk and there is no config switch: a human picks it
   per session, in the overlay;
-- when the grant is live and the ticket is still valid, the command runs
-  without any modal; when the ticket is gone, only the password stage shows.
+- while the grant is live (and therefore the ticket is valid) the command runs
+  with no modal at all.
 
 Overlay plumbing: `OverlayResult.choice` + `approveValues` let one approval
 carry a scope, so "Allow once" and "Allow for 15 min" stay distinguishable.
+
+## 0.3.31-omp.5 — grant follows the sudo ticket
+
+`0.3.31-omp.4` kept the grant alive across `sudo -K`: the plugin only checked
+the ticket for the *command*, so after wiping credentials the next `sudo_run`
+correctly asked for a password but silently skipped the Allow layer — and the
+overlay offered only two choices, because a stale grant was still considered
+live. From the user's side "Allow for 15 min" appeared to vanish after
+`sudo -K`.
+
+Fixed by making the grant subordinate to authentication
+(`syncGrantToTicket`): a missing ticket — `sudo -K`, the 15-minute ticket
+timeout, or the 5-second probe timeout — revokes the grant, so the next call is
+the full three-choice Allow + password flow. `sudo -K` is now a complete
+revoke, and the grant option is offered on every overlay that appears.
 
 ## 0.3.31-omp.3 — host-version gate, dead code, NixOS integration
 
@@ -377,7 +393,7 @@ omp loads it from a store path via `~/.omp/agent/config.yml`:
 
 ```nix
 # nixos_data/flake.nix inputs:
-omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.4";
+omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.5";
 # nixos_data/omp-pix-sudo.nix: home-manager writes config.yml with
 #   extensions: [ "${inputs.omp-pix-sudo.packages.<system>.default}/share/omp-pix-sudo/src/index.ts" ]
 ```
@@ -390,7 +406,7 @@ in nixos_data).
 From Git (manual, legacy):
 
 ```bash
-omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.4
+omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.5
 ```
 
 Use an immutable tag or commit for reproducible installs — the release tag

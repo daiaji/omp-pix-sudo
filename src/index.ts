@@ -45,7 +45,7 @@ import {
 	unframeToolResult,
 } from "./pix-pretty/utils.ts";
 import { withAgentBlock } from "./pix-runtime/index.ts";
-import { extendGrant, grantActive, revokeGrant, SESSION_GRANT_CHOICE } from "./grant.ts";
+import { extendGrant, revokeGrant, SESSION_GRANT_CHOICE, syncGrantToTicket } from "./grant.ts";
 import { type CollapseState, type CollapseTimers, tickCollapse } from "./pix-runtime/collapse.ts";
 import {
 	detectAuthFailure,
@@ -374,11 +374,11 @@ export default function (pi: ExtensionAPI): void {
 			let noBinaryMessage: string | undefined;
 
 			// ── Confirm (+ validate password inside the same open overlay) ───────
-			// A live session grant skips the confirm layer but never the password:
-			// the sudo ticket is still consulted, so `sudo -K` or ticket expiry
-			// brings the password prompt back while the grant is active.
-			const granted = grantActive();
-			const overlayResult: OverlayResult = granted && cached
+			// A live grant (necessarily backed by a valid ticket, see above) skips
+			// the confirm layer entirely; every other path shows the overlay with
+			// all three scopes, including right after `sudo -K`.
+			const granted = syncGrantToTicket(cached);
+			const overlayResult: OverlayResult = granted
 				? { action: "approved", choice: "granted" }
 				: await withAgentBlock(
 				pi.events,
@@ -392,9 +392,7 @@ export default function (pi: ExtensionAPI): void {
 								mode: "confirm",
 								icon: icon("lock"),
 								title: "Root Command Request",
-								body: granted
-									? [...body, "(auto-approval active — no password needed)"]
-									: [...body, "(sudo session active — no password needed)"],
+								body: [...body, "(sudo session active — no password needed)"],
 								accent: "error",
 								timeoutMs: ROOT_PROMPT_TIMEOUT_MS,
 								choices: ROOT_CHOICES,
@@ -409,7 +407,6 @@ export default function (pi: ExtensionAPI): void {
 							mode: "sudo",
 							icon: icon("lock"),
 							title: "Root Command Request",
-							body,
 							accent: "error",
 							timeoutMs: ROOT_PROMPT_TIMEOUT_MS,
 							maxPasswordAttempts: MAX_PASSWORD_ATTEMPTS,
@@ -436,12 +433,11 @@ export default function (pi: ExtensionAPI): void {
 									return true;
 								}
 							},
-							choices: granted
-								? [
-										{ value: "yes", label: "Allow — enter password", description: "Proceed to password prompt" },
-										{ value: "no", label: "Deny — block command", description: "Prevent this command from running" },
-									]
-								: ROOT_CHOICES,
+							// Same three scopes as the cached case. The list must not shrink
+							// when a grant is active: after `sudo -K` the user is looking at
+							// exactly this overlay and needs the grant option back.
+							body: [...body, "(approving asks for your sudo password first)"],
+							choices: ROOT_CHOICES,
 							approveValues: [SESSION_GRANT_CHOICE],
 						},
 						ctx,

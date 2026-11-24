@@ -45,3 +45,18 @@ export function extendGrant(now: number = Date.now()): void {
 export function revokeGrant(): void {
 	grantedUntil = 0;
 }
+
+/**
+ * Tie the grant's lifetime to authentication and report whether it is live.
+ *
+ * A grant only accelerates *confirmation*, so it must never outlive the sudo
+ * ticket: when the ticket is gone (`sudo -K`, the 15-minute ticket timeout, or
+ * the probe timing out) the grant is revoked and the next call re-asks for
+ * Allow AND the password. Without this, `sudo -K` looked like "only the
+ * password came back", and the overlay dropped the grant option because a
+ * stale grant was still live.
+ */
+export function syncGrantToTicket(cached: boolean, now: number = Date.now()): boolean {
+	if (!cached) revokeGrant();
+	return grantActive(now);
+}

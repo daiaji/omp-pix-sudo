@@ -16,6 +16,7 @@ import {
 	grantRemainingMs,
 	extendGrant,
 	revokeGrant,
+	syncGrantToTicket,
 	SESSION_GRANT_MS,
 } from "../src/grant.ts";
 
@@ -48,6 +49,24 @@ describe("session grant", () => {
 		expect(grantActive(T0 + SESSION_GRANT_MS + 1)).toBeTrue();
 		expect(grantActive(later + SESSION_GRANT_MS - 1)).toBeTrue();
 		expect(grantActive(later + SESSION_GRANT_MS)).toBeFalse();
+	});
+
+	test("a lost sudo ticket revokes the grant (sudo -K = full revoke)", () => {
+		extendGrant(T0);
+		// Ticket probe failed: the grant must not survive authentication.
+		expect(syncGrantToTicket(false, T0 + 1_000)).toBeFalse();
+		expect(grantActive(T0 + 1_000)).toBeFalse();
+	});
+
+	test("a valid ticket keeps the grant live", () => {
+		extendGrant(T0);
+		expect(syncGrantToTicket(true, T0 + 1_000)).toBeTrue();
+		expect(grantRemainingMs(T0 + 1_000)).toBe(SESSION_GRANT_MS - 1_000);
+	});
+
+	test("ticket loss on a fresh process stays closed", () => {
+		expect(syncGrantToTicket(false, T0)).toBeFalse();
+		expect(syncGrantToTicket(true, T0)).toBeFalse();
 	});
 
 	test("revoke closes an active window", () => {
