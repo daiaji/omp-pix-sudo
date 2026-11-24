@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from "node:path";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 
 import {
 	ANSI_CAPTURE_RE,
@@ -69,7 +69,9 @@ export function viewportText(
 }
 
 type ViewportComponent = {
-	render(width: number): string[];
+	// omp 19.1.1 的 `Text.render` 返回 `readonly string[]`（pi-tui text.ts:144），
+	// 所以这里不能收窄成可变数组。
+	render(width: number): readonly string[];
 	invalidate(): void;
 };
 
@@ -99,7 +101,7 @@ type ViewportEntry = {
 	/** Raw line → line fitted to this width. */
 	lines: Map<string, string>;
 	/** Inner render output for the current text at this width. */
-	rendered: string[] | undefined;
+	rendered: readonly string[] | undefined;
 };
 
 class ViewportText implements TextComponentLike, ViewportComponent {
@@ -128,7 +130,7 @@ class ViewportText implements TextComponentLike, ViewportComponent {
 		return this.text;
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		let entry = this.widths.get(width);
 		if (entry) {
 			// Refresh recency: Map keeps insertion order, so re-insert moves it to the end.
@@ -635,8 +637,8 @@ export function unframeToolResult<T extends FramableComponent>(component: T): T 
  * footer lines. Existing callers inherit this distro-wide presentation.
  */
 export function ruleFrame(
-	bodyLines: string[],
-	footerLines: string[] = [],
+	bodyLines: readonly string[],
+	footerLines: readonly string[] = [],
 	width?: number,
 	paint?: RulePaint,
 ): string[] {
@@ -645,8 +647,8 @@ export function ruleFrame(
 
 /** Explicit solid top/bottom frame for sections that need stronger separation. */
 export function sectionFrame(
-	bodyLines: string[],
-	footerLines: string[] = [],
+	bodyLines: readonly string[],
+	footerLines: readonly string[] = [],
 	width?: number,
 	paint?: RulePaint,
 ): string[] {

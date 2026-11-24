@@ -17,6 +17,12 @@ vendored verbatim under `git-src/` so the port can be diffed against upstream.
 | `@xynogen/pix-runtime` | 0.12.2 | `xynogen-pix-runtime-0.12.2.tgz` | `b8791eab460ab871dc22924fa2c6108c2d6d30e09214c64ccba4baa6fce9266e` |
 | `@xynogen/pix-pretty` | 1.29.0 | `xynogen-pix-pretty-1.29.0.tgz` | `39020586deca1b81b54be7e6f107d16d4acf2e6494b0f9ae001c3908c8ced3ad` |
 
+**Single source of truth**: this table is a projection of `upstream.json` — change
+versions only there, then `scripts/sync-upstream && scripts/port --check`.
+`scripts/port --check` in CI proves `src/` is exactly what the generator derives
+from `git-src/` (import rewrite + deletion/replacement lists), so hand-edits to
+`src/` will not survive.
+
 `pix-pretty` was resolved from pix-sudo's `^1.19.0` range; npm picked **1.29.0**,
 the current latest at vendoring time. `pix-runtime` was pinned explicitly to
 0.12.2 (pix-sudo asks for `^0.12.0`).
@@ -68,7 +74,7 @@ Note the reported file is `pix-sudo/src/index.ts` while the offending import
 lives in `pix-runtime/src/extension.ts`; the loader surfaces the top-level
 extension entry, not the module that actually failed to resolve.
 
-## Compatibility inventory (verified against omp 18.4.10)
+## Compatibility inventory (verified against omp 18.4.10; re-proven by the 19.1.1 type gate — see Tested in)
 
 **Broken value imports — symbol absent from omp:**
 
@@ -222,20 +228,63 @@ truncation, collapsed rendering — is preserved.
 
 ## Tested in
 
-Verified 2026-10-02 against omp 18.4.10:
+**omp 19.1.1** (2026-11-24, `0.3.31-omp.3`):
 
-- `omp plugin link` → exit 0, `sudo_run` registered, no loader error in
-  `~/.omp/logs/`.
+- Type gate: `bunx tsc --noEmit` against the pinned `@oh-my-pi/*@19.1.1`
+  declarations → **0 errors**. This is the API contract, not a claim — three
+  fields that exist only in `@earendil-works/*` (`promptSnippet`, `exposure`,
+  `renderShell`) and one dead read (`options.isError`) were found and removed
+  by exactly this gate (see 0.3.31-omp.2→omp.3 notes below).
+- Registration: `bun test` loads `src/index.ts` through a stub host and asserts
+  the `sudo_run` contract (name, `{ command, reason? }` schema, renderer hooks).
+- Store-path load: `omp -p --no-session --plugin-dir <store> --tools=nope x`
+  lists `sudo_run` in the registered-tools line; machine-checked in nixos_data's
+  `checks.omp-pix-sudo-load` (paired: control run must NOT list it).
 - Print mode → the tool returns `isError: true` with `errorKind: "no-ui"`,
   confirming the non-interactive guard.
 
-Verified 2026-10-03 against omp 18.4.11 — see **0.3.31-omp.2** below.
+Earlier: verified 2026-10-02 against omp 18.4.10 (`omp plugin link` exit 0, no
+loader error) and 2026-10-03 against omp 18.4.11 (**0.3.31-omp.2** below).
 
-**Still not tested — open gap:** the TUI overlay path (the `SelectList`
+**Still not exercised — open gap:** the TUI overlay path (the `SelectList`
 approval list, the masked password prompt, PAM-ticket reuse and the
-dead-man's-switch countdown) has **not** been exercised against a real
-terminal. The renderer and result-shaping paths were, but drawing the overlay
-itself and typing a password into it were not.
+dead-man's-switch countdown) has **not** been driven against a real terminal
+since the omp.3 refactor. The renderer and result-shaping paths are type- and
+test-covered, but drawing the overlay and typing a password into it need one
+manual TUI pass: in a TUI session ask the agent to `sudo_run id` → password
+once → `uid=0(root)` → immediate repeat skips the password but still shows
+Allow → `sudo -k` then repeat prompts for the password again.
+
+## 0.3.31-omp.3 — host-version gate, dead code, NixOS integration
+
+- **Type gate against the pinned host** (`@oh-my-pi/*@19.1.1`, same version as
+  the store binary): removed `promptSnippet` / `exposure` / `renderShell`
+  (fields only `@earendil-works/*` declares — omp's `ToolDefinition` has none
+  of them) and the `options.isError` render read (omp forwards the error flag
+  on the *result*, `tool-execution.ts:1991`, so the old read was always
+  `undefined` — non-`sudoResult` error cards kept their error framing via
+  `result.isError` now).
+- **`yolo` / `afk` deleted**: `getUnattendedMode` read a WeakMap nothing ever
+  wrote, so `mode` was always `"off"` — the branches were unreachable, and
+  omp's `tools.approvalMode` was never read. Behavior on this machine was
+  already "every root command shows Allow, with password skipped on a cached
+  ticket"; now the code says so. `withAgentBlock` / `beginAgentBlock` /
+  `herdr-notify` stay (the blocked-state bridge is used).
+- **`agentDir()` fix**: falls back to `~/.omp/agent` when it exists (omp sets
+  `PI_CODING_AGENT_DIR` only with profiles). `/pix` state now lands where omp
+  reads it instead of `~/.pi/agent`.
+- **sudo hardening**: `catalog.ts` gains `knownPaths` with NixOS's
+  `/run/wrappers/bin/sudo` (PATH often stripped under systemd/sanitized
+  wrappers), a matching install hint, a 5 s cap on the `sudo -n true` ticket
+  probe, and a distinct `errorKind: "no-binary"` so "sudo not found" no longer
+  masquerades as "authentication failed".
+- **SSOT tooling**: `upstream.json` (name/version/tarball/sha256) +
+  `scripts/sync-upstream` (download, verify, extract) + `scripts/port`
+  (git-src → src with import rewrite and an explicit deletion/replacement
+  list) and `scripts/port --check`, which proves `src/` is exactly derived.
+  24 files unreachable from the load closure were removed (71 → 47 TS files).
+- **flake.nix**: store package (src + package.json + LICENSE), bun-only
+  devShell, version derived from package.json.
 
 ## 0.3.31-omp.2 — runtime fixes
 
@@ -287,10 +336,25 @@ circuits before the call proceeds.
 
 ## Installation
 
-From Git:
+**Declarative (NixOS, the supported path)** — the plugin is a nix package and
+omp loads it from a store path via `~/.omp/agent/config.yml`:
+
+```nix
+# nixos_data/flake.nix inputs:
+omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.3";
+# nixos_data/omp-pix-sudo.nix: home-manager writes config.yml with
+#   extensions: [ "${inputs.omp-pix-sudo.packages.<system>.default}/share/omp-pix-sudo/src/index.ts" ]
+```
+
+No bun, no `omp plugin link`, no writes to `~/.omp/plugins`. Rollback =
+change the flake input's tag → `nixos-rebuild switch`; load health is
+machine-checked by `checks.omp-pix-sudo-load` (`just verify <host>` step 3
+in nixos_data).
+
+From Git (manual, legacy):
 
 ```bash
-omp install github:steimerbyte/omp-pix-sudo#v0.3.31-omp.2
+omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.3
 ```
 
 Use an immutable tag or commit for reproducible installs — the release tag
@@ -313,7 +377,7 @@ Local, from a checkout — clone, then link the working copy so edits take effec
 without reinstalling:
 
 ```bash
-git clone https://github.com/steimerbyte/omp-pix-sudo.git
+git clone https://github.com/daiaji/omp-pix-sudo.git
 cd omp-pix-sudo
 omp plugin link "$PWD"
 ```

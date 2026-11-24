@@ -21,8 +21,8 @@
  *   - Output truncated to 50 KB / 2000 lines.
  */
 
-import type { AgentToolUpdateCallback, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { AgentToolUpdateCallback, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { Text } from "@oh-my-pi/pi-tui";
 import { FG_DIM, RST, resolveBaseBackground } from "./pix-pretty/ansi.ts";
 import { MAX_PREVIEW_LINES } from "./pix-pretty/config.ts";
 import { type OverlayResult, showOverlay } from "./pix-pretty/gate-overlay.ts";
@@ -44,7 +44,7 @@ import {
 	termW,
 	unframeToolResult,
 } from "./pix-pretty/utils.ts";
-import { getUnattendedMode, withAgentBlock } from "./pix-runtime/index.ts";
+import { withAgentBlock } from "./pix-runtime/index.ts";
 import { type CollapseState, type CollapseTimers, tickCollapse } from "./pix-runtime/collapse.ts";
 import {
 	detectAuthFailure,
@@ -61,6 +61,24 @@ import {
 const ROOT_PROMPT_TIMEOUT_MS = 60_000;
 const MAX_PASSWORD_ATTEMPTS = 3;
 
+/**
+ * Parameter schema, hoisted to module level.
+ *
+ * omp's `registerTool<TParams extends TSchema>` infers `TParams` from the
+ * `parameters` property; a *variable reference* feeds inference, but an inline
+ * `z.object(...)` call cannot (TS would have to invert the call), so `TParams`
+ * falls back to the default `TSchema` and `execute`'s `params` degrades to
+ * `unknown`. Verified against omp 19.1.1's `ToolDefinition` with a probe project:
+ * hoisted schema → `params.command`/`params.reason` fully typed.
+ *
+ * omp's authoring doc: "Use pi.zod or pi.arktype for new tool schemas. pi.typebox
+ * exists for compatibility with older extensions." The Zod-compatible surface is
+ * the documented default, so that is what the port uses. The schema VALUE still
+ * needs the host-injected builder, so the registration assigns `parameters:
+ * SUDO_PARAMS` where `SUDO_PARAMS` is built from `pi.zod` at entry time.
+ */
+type SudoParams = { command: string; reason?: string };
+
 type SudoOutcome =
 	| "awaiting-approval"
 	| "running"
@@ -71,7 +89,7 @@ type SudoOutcome =
 	| "error";
 
 type SudoCancellationKind = "denied" | "timeout" | "missing-password" | "aborted";
-type SudoErrorKind = "no-ui" | "authentication" | "execution" | "no-result" | "exit-code";
+type SudoErrorKind = "no-ui" | "no-binary" | "authentication" | "execution" | "no-result" | "exit-code";
 
 export interface SudoResultDetails {
 	_type: "sudoResult";
@@ -133,6 +151,7 @@ function terminalMeta(details: SudoResultDetails): string {
 	if (details.outcome === "timed-out") return "timed out";
 	if (details.outcome === "cancelled") return "cancelled";
 	if (details.errorKind === "no-ui") return "interactive session required";
+	if (details.errorKind === "no-binary") return "sudo not found";
 	if (details.errorKind === "authentication") return "authentication failed";
 	if (details.errorKind === "execution" || details.errorKind === "no-result") return "failed";
 
@@ -248,10 +267,19 @@ export default function (pi: ExtensionAPI): void {
 	// builder; the Zod-compatible surface is the documented default for tool
 	// parameters, so that is what the port uses.
 	const z = pi.zod;
+	const sudoSchema = z.object({
+		command: z.string().describe("Shell command to run as root (passed to `sh -c`)."),
+		reason: z
+			.string()
+			.optional()
+			.describe(
+				"Short plain-English explanation of why root is needed. " +
+					"Shown to the user so they can make an informed decision.",
+			),
+	});
 
 	pi.registerTool({
 		name: "sudo_run",
-		...({ exposure: "deferred" } as const),
 		label: "Run as root",
 		description:
 			"Execute a shell command as root on the LOCAL machine (sudo). " +
@@ -261,49 +289,25 @@ export default function (pi: ExtensionAPI): void {
 			"Use only when the task genuinely requires elevated permissions " +
 			"(e.g. writing to /etc, managing system services, installing packages system-wide). " +
 			"You MUST provide a clear `reason` explaining why root is needed.",
-		promptSnippet: "Execute a shell command as root on the local machine",
-		promptGuidelines: [
-			"sudo_run: LOCAL root only — use `bash` for non-root local, `ssh_run` (`sudo: true`) for remote. Prefer plain bash; use only when root is strictly required. Set `reason` to a short why-root sentence.",
-		],
+		// omp 扩展工具默认 loadMode 即 "discoverable"（不进初始顶层工具集，
+		// 按需 --tools 激活），等价于上游 earendil 的 exposure: "deferred"。
+		// 不写 defaultInactive: true —— 那要求注册方自己 setActiveTools() 激活。
+		// 也没有 renderShell / promptSnippet / promptGuidelines：这些字段只在
+		// @earendil-works 里存在，omp 19.1.1 的 ToolDefinition 里没有（静默丢弃；
+		// promptGuidelines 只属于 ToolInfo 元数据）。全宽画框是渲染器自身的
+		// 默认行为，不依赖该字段。
 
-		// Full-width framing (rules + bg fill) baked at termW(), like pix-bash.
-		renderShell: "self",
-
-		// Schema built inline from the host-injected Zod-compatible builder.
-		// omp's authoring doc: "Use pi.zod or pi.arktype for new tool schemas.
-		// pi.typebox exists for compatibility with older extensions." The
-		// builder only exists on the injected `pi`, so the schema is constructed
-		// here at registration time rather than as a module-level constant.
-		parameters: z.object({
-			command: z.string().describe("Shell command to run as root (passed to `sh -c`)."),
-			reason: z
-				.string()
-				.optional()
-				.describe(
-					"Short plain-English explanation of why root is needed. " +
-						"Shown to the user so they can make an informed decision.",
-				),
-		}),
+		// Schema: the builder only exists on the injected `pi`, so the value is
+		// constructed here — but bound to a *named const* first (see SudoParams
+		// docblock for why inline `z.object(...)` breaks `execute`'s params
+		// inference under omp 19.1.1's `ToolDefinition` generics).
+		parameters: sudoSchema,
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const { command, reason } = params;
 			// `toolCallId` is deliberately unused. The host forwards no call id to
 			// the renderers, so the card's collapse bag is keyed on the per-card
 			// `args` object the renderers do receive — see `collapseStateFor`.
-
-			const mode = getUnattendedMode(pi.events);
-			const yolo = mode === "yolo";
-			if (mode === "afk") {
-				return {
-					content: [{ type: "text", text: "sudo_run denied immediately — AFK mode is active." }],
-					details: makeDetails(command, reason, {
-						outcome: "denied",
-						cancellationKind: "denied",
-					}),
-					// Blocked, not completed — see the cancellation branch below.
-					isError: true,
-				};
-			}
 
 			// ── Non-interactive: block immediately ────────────────────────────
 			// The approval step is a custom terminal overlay (`ui.custom` with a
@@ -347,21 +351,16 @@ export default function (pi: ExtensionAPI): void {
 
 			let result: { stdout: string; stderr: string; code: number } | undefined;
 			let executionError: unknown;
+			// Set when `spawnSudo` could not resolve the sudo binary at all; takes
+			// priority over `executionError` in the failure report below.
+			let noBinaryMessage: string | undefined;
 
 			// ── Confirm (+ validate password inside the same open overlay) ───────
-			// YOLO auto-approves root, but only when a PAM ticket is already cached:
-			// the password cannot be auto-typed, so a no-ticket run still prompts.
-			if (yolo && cached) {
-				ctx.ui.notify("🔐 YOLO — root command auto-approved (cached ticket).", "warning");
-			}
 			const overlayResult = await withAgentBlock(
 				pi.events,
 				"sudo_run",
 				"Root approval required",
 				() => {
-					if (yolo && cached) {
-						return Promise.resolve<OverlayResult>({ action: "approved", password: "" });
-					}
 					if (cached) {
 						return showOverlay(
 							ctx.ui,
@@ -401,7 +400,15 @@ export default function (pi: ExtensionAPI): void {
 									}
 									return true;
 								} catch (err) {
-									executionError = err;
+									// Distinguish "sudo binary missing" from "password wrong":
+									// a sanitize-PATH launch (systemd unit, .desktop wrapper)
+									// used to surface as "authentication failed", which sends
+									// the user re-typing a correct password (REFACTOR.md N4).
+									if (err instanceof Error && err.name === "BinaryMissingError") {
+										noBinaryMessage = err.message;
+									} else {
+										executionError = err;
+									}
 									return true;
 								}
 							},
@@ -453,6 +460,25 @@ export default function (pi: ExtensionAPI): void {
 					// so without this the model is handed a clean success for a
 					// denied, timed-out or cancelled root request and will report
 					// the task as done. A blocked request must read as a failure.
+					isError: true,
+				};
+			}
+
+			if (noBinaryMessage) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`sudo_run failed: ${noBinaryMessage}\n` +
+								`On NixOS, add /run/wrappers/bin to PATH or point binary.json's ` +
+								`sudo entry at an absolute path.`,
+						},
+					],
+					details: makeDetails(command, reason, {
+						outcome: "error",
+						errorKind: "no-binary",
+					}),
 					isError: true,
 				};
 			}
@@ -608,7 +634,12 @@ export default function (pi: ExtensionAPI): void {
 			const text = unframeToolResult(new Text("", 0, 0));
 			const details = result.details as SudoResultDetails | undefined;
 			const isPartial = options.isPartial === true;
-			const isError = options.isError === true;
+			// omp 19.1.1 carries the error flag on the RESULT (tool-execution.ts:1991
+			// forwards `{ content, details, isError }` into renderResult), not on the
+			// render-options bag (`{ expanded, isPartial, spinnerFrame }` only,
+			// wrapper.ts:106). The old `options.isError` read was earendil-shaped and
+			// always `undefined` under omp.
+			const isError = result.isError === true;
 			const completed = (err: boolean) => frameToolResult(text, theme, err);
 
 			if (details?._type !== "sudoResult") {

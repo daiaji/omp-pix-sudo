@@ -1,0 +1,32 @@
+{
+	"$comment": "Single source of truth for the vendored upstream packages. The version table in README.md is generated from this file — never hand-edit both. scripts/sync-upstream downloads+verifies the tarballs into git-src/, scripts/port re-derives src/ from git-src/, and `scripts/port --check` diffs the result against src/. Upgrade flow: change versions here → just sync → just port → review diff → bun test.",
+	"packages": [
+		{
+			"name": "@xynogen/pix-sudo",
+			"version": "0.3.31",
+			"tarball": "https://registry.npmjs.org/@xynogen/pix-sudo/-/pix-sudo-0.3.31.tgz",
+			"sha256": "483c8bc3c5bf35d67c179e37beb685d391cceca4de7558c8eb69f8c70884f7e8",
+			"stripPrefix": "package/",
+			"extractTo": "git-src/pix-sudo",
+			"srcSubdir": "src"
+		},
+		{
+			"name": "@xynogen/pix-runtime",
+			"version": "0.12.2",
+			"tarball": "https://registry.npmjs.org/@xynogen/pix-runtime/-/pix-runtime-0.12.2.tgz",
+			"sha256": "b8791eab460ab871dc22924fa2c6108c2d6d30e09214c64ccba4baa6fce9266e",
+			"stripPrefix": "package/",
+			"extractTo": "git-src/pix-runtime",
+			"srcSubdir": "src"
+		},
+		{
+			"name": "@xynogen/pix-pretty",
+			"version": "1.29.0",
+			"tarball": "https://registry.npmjs.org/@xynogen/pix-pretty/-/pix-pretty-1.29.0.tgz",
+			"sha256": "39020586deca1b81b54be7e6f107d16d4acf2e6494b0f9ae001c3908c8ced3ad",
+			"stripPrefix": "package/",
+			"extractTo": "git-src/pix-pretty",
+			"srcSubdir": "src"
+		}
+	]
+}

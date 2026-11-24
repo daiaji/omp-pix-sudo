@@ -180,7 +180,18 @@ export const CATALOG = {
 		versionArgs: ["-V"],
 		hint: { darwin: "brew install sshpass", default: "install sshpass" },
 	},
-	sudo: { usedBy: ["pix-sudo"], os: UNIX, hint: { default: "install sudo" } },
+	sudo: {
+		usedBy: ["pix-sudo"],
+		os: UNIX,
+		hint: {
+			linux: "install sudo (NixOS: security.sudo.enable = true, or add /run/wrappers/bin to PATH)",
+			default: "install sudo",
+		},
+		// NixOS wraps sudo at /run/wrappers/bin/sudo; that dir is often missing
+		// from PATH when omp is started from a systemd unit or a sanitized
+		// wrapper script (REFACTOR.md N4).
+		knownPaths: (_env, h) => (h.os === "linux" ? ["/run/wrappers/bin/sudo"] : []),
+	},
 	"wl-paste": { usedBy: ["pix-ask"], os: LINUX, hint: { default: "install wl-clipboard" } },
 	xclip: {
 		usedBy: ["pix-ask"],

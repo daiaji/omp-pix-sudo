@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Ellipsis, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import { config } from "../pix-runtime/runtime.ts";
 import { prettySection } from "../pix-runtime/sections/index.ts";
 
@@ -62,7 +62,10 @@ export async function renderFileContent(
 			});
 			continue;
 		}
-		const display = truncateToWidth(code, cw, `${FG_DIM}›`);
+		// 旧行为传 `${FG_DIM}›` 作为 ellipsis —— omp 19.1.1 的 truncateToWidth
+		// 把任何字符串 ellipsis 当 Ellipsis.Omit（utils.ts:256），即「无省略号」；
+		// 保留可见标记改用枚举（输出形状不变，语义显式化）。
+		const display = truncateToWidth(code, cw, Ellipsis.Unicode);
 		out.push(`${lnum(ln, nw)} ${FG_RULE}│${RST} ${display}${RST}`);
 	}
 

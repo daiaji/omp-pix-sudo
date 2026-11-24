@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 import { binDir } from "../paths.ts";
 import { currentPlatform, type HostPlatform } from "../platform.ts";
@@ -200,7 +201,7 @@ async function download(
 		},
 	});
 	await pipeline(
-		Readable.fromWeb(res.body as import("node:stream/web").ReadableStream),
+		Readable.fromWeb(res.body as unknown as NodeWebReadableStream),
 		tap,
 		createWriteStream(dest),
 	);

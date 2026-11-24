@@ -5,7 +5,7 @@
  * Pure view-controller over `binaries/*`; pix-command.ts owns the frame + tabs.
  */
 
-import { Input, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Ellipsis, Input, matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { ensureTool, type ToolStatus } from "./binaries/ensure.ts";
 import { listTools, type ToolLookup, toolVersion } from "./binaries/resolve.ts";
 import { readBinaryStore, setBinaryChoice, syncBinaryStore } from "./binaries/store.ts";
@@ -201,7 +201,7 @@ export function createBinariesTab(opts: BinariesTabOptions) {
 					status = { text: `re-checked ${row.name}`, color: "muted" };
 				}
 			} else if (matchesKey(data, "e") && row) {
-				const input = new Input({ prompt: `${row.name} path: ` });
+				const input = Object.assign(new Input(), { prompt: `${row.name} path: ` });
 				input.focused = true;
 				// setValue keeps the cursor at 0; paste the prefill as typed text so the
 				// cursor sits at the end and ctrl+u clears the whole value.
@@ -218,7 +218,7 @@ export function createBinariesTab(opts: BinariesTabOptions) {
 				};
 				editor = { name: row.name, input };
 			} else if (matchesKey(data, "/")) {
-				const input = new Input({ prompt: "filter: " });
+				const input = Object.assign(new Input(), { prompt: "filter: " });
 				input.focused = true;
 				if (query) input.handleInput(`\x1b[200~${query}\x1b[201~`);
 				// Live filter: every keystroke narrows the list. Enter keeps it, esc clears it.
@@ -295,7 +295,7 @@ export function createBinariesTab(opts: BinariesTabOptions) {
 				}
 				if (sel) selectedBodyLine = body.length;
 				const line = `${cursor} ${glyph} ${name}  ${detail}`;
-				body.push(visibleWidth(line) > inner ? truncateToWidth(line, inner, "…") : line);
+				body.push(visibleWidth(line) > inner ? truncateToWidth(line, inner, Ellipsis.Unicode) : line);
 			}
 
 			const header: string[] = [];
@@ -307,7 +307,7 @@ export function createBinariesTab(opts: BinariesTabOptions) {
 				const order = " (bin → system → PATH → download)";
 				const tail = ` · unset = automatic${storePath.length + 7 + 20 + order.length <= inner ? order : ""}`;
 				const text = `paths: ${middleTruncate(storePath, Math.max(12, inner - 7 - tail.length))}${tail}`;
-				header.push(theme.fg("muted", truncateToWidth(text, inner, "…")));
+				header.push(theme.fg("muted", truncateToWidth(text, inner, Ellipsis.Unicode)));
 			}
 			// One fixed detail line (editor › action status › selected row) so the
 			// list never shifts as the cursor moves.

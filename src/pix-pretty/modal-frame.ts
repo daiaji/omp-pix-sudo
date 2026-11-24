@@ -10,12 +10,13 @@
  */
 
 import {
+	Ellipsis,
 	Key,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+} from "@oh-my-pi/pi-tui";
 import { config } from "../pix-runtime/runtime.ts";
 import { prettySection, type RenderSize } from "../pix-runtime/sections/index.ts";
 
@@ -103,8 +104,9 @@ export interface FrameOptions {
 
 // ── Line fitting ──────────────────────────────────────────────────────────────
 
-/** Ellipsis for the wrap=false path — visibly a marker, unlike a bare "...". */
-const ELLIPSIS = "…";
+/** Ellipsis for the wrap=false path — omp 19.1.1 的 truncateToWidth 只接受
+ * `Ellipsis` 枚举（任何字符串都会被当成 Ellipsis.Omit 吞掉，utils.ts:256）。 */
+const ELLIPSIS = Ellipsis.Unicode;
 
 export interface FitResult {
 	rows: string[];
@@ -618,6 +620,28 @@ export interface SelectListThemeConfig {
 	description: (t: string) => string;
 	scrollInfo: (t: string) => string;
 	noMatch: (t: string) => string;
+	// omp 19.1.1 要求必填（select-list.ts:67）；overlay 只用到 cursor 的回退读取。
+	symbols: {
+		cursor: string;
+		inputCursor: string;
+		boxRound: {
+			topLeft: string; topRight: string; bottomLeft: string; bottomRight: string;
+			horizontal: string; vertical: string;
+		};
+		boxSharp: {
+			topLeft: string; topRight: string; bottomLeft: string; bottomRight: string;
+			horizontal: string; vertical: string; teeDown: string; teeUp: string;
+			teeLeft: string; teeRight: string; cross: string;
+		};
+		table: {
+			topLeft: string; topRight: string; bottomLeft: string; bottomRight: string;
+			horizontal: string; vertical: string; teeDown: string; teeUp: string;
+			teeLeft: string; teeRight: string; cross: string;
+		};
+		quoteBorder: string;
+		hrChar: string;
+		spinnerFrames: string[];
+	};
 }
 
 interface FgTheme {
@@ -635,5 +659,29 @@ export function selectListTheme(theme: FgTheme, accent = "accent"): SelectListTh
 		description: (t) => theme.fg("dim", t),
 		scrollInfo: (t) => theme.fg("muted", t),
 		noMatch: (t) => theme.fg("warning", t),
+		// omp 19.1.1 的 SelectListTheme 把 symbols 升级为必填（select-list.ts:67）。
+		// 运行期唯一读取是 symbols?.cursor ?? ">"（select-list.ts:592），给一个
+		// 与该回退一致的值即可；其余 box/table 符号 overlay 不用。
+		symbols: {
+			cursor: ">",
+			inputCursor: "▌",
+			boxRound: {
+				topLeft: "╭", topRight: "╮", bottomLeft: "╰", bottomRight: "╯",
+				horizontal: "─", vertical: "│",
+			},
+			boxSharp: {
+				topLeft: "┌", topRight: "┐", bottomLeft: "└", bottomRight: "┘",
+				horizontal: "─", vertical: "│", teeDown: "┬", teeUp: "┴",
+				teeLeft: "┤", teeRight: "├", cross: "┼",
+			},
+			table: {
+				topLeft: "┌", topRight: "┐", bottomLeft: "└", bottomRight: "┘",
+				horizontal: "─", vertical: "│", teeDown: "┬", teeUp: "┴",
+				teeLeft: "┤", teeRight: "├", cross: "┼",
+			},
+			quoteBorder: "❝",
+			hrChar: "─",
+			spinnerFrames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+		},
 	};
 }

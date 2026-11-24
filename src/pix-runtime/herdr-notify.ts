@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { EventBus } from "@earendil-works/pi-coding-agent";
+import type { HostEventBus } from "../host/host-bus.ts";
 import type { PixAgentState, PixAgentStateEvent } from "./herdr-state.ts";
 
 /**
@@ -8,7 +8,7 @@ import type { PixAgentState, PixAgentStateEvent } from "./herdr-state.ts";
  * user gets a sound + popup. Fires only on the transition INTO blocked, never
  * repeatedly. No-op outside a herdr pane; silence with `PIX_HERDR_NOTIFY=0`.
  */
-export function bindHerdrNotify(events: EventBus, spawnFn = spawn): () => void {
+export function bindHerdrNotify(events: HostEventBus, spawnFn = spawn): () => void {
 	// ponytail: gate on HERDR_ENV — herdr's own extension uses the same signal;
 	//           outside herdr the CLI would just no-op, so skip the spawn entirely.
 	if (process.env.HERDR_ENV !== "1" || process.env.PIX_HERDR_NOTIFY === "0") {

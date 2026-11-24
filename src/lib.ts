@@ -7,7 +7,7 @@ import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	truncateHead,
-} from "@earendil-works/pi-coding-agent";
+} from "@oh-my-pi/pi-coding-agent";
 import { spawnTool } from "./pix-runtime/exec.ts";
 
 // Pi's own tool-output limits (50KB / 2000 lines), so every tool caps the same way.
@@ -22,7 +22,9 @@ export function truncate(
 	maxBytes = MAX_OUTPUT_BYTES,
 ): { text: string; truncated: boolean } {
 	const r = truncateHead(text, { maxLines, maxBytes });
-	if (!r.firstLineExceedsLimit) return { text: r.content, truncated: r.truncated };
+	// omp 19.1.1 的 TruncationResult.truncated 是可选的（pi-tui streaming-output.ts:133，
+	// 无截断时省略），用 `=== true` 收敛成 boolean。
+	if (!r.firstLineExceedsLimit) return { text: r.content, truncated: r.truncated === true };
 	// One line over the byte cap (minified JSON, a base64 blob): truncateHead keeps
 	// nothing. Keep its first maxBytes instead, cut on a UTF-8 boundary.
 	const head = Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
@@ -75,16 +77,23 @@ export function validateSudoPassword(password: string, signal?: AbortSignal): Pr
  * within the system sudoers timeout (default ~15 min).
  */
 export function hasValidTicket(): Promise<boolean> {
-	return new Promise((resolve) => {
-		let proc: ReturnType<typeof spawnTool>;
-		try {
-			proc = spawnTool("sudo", ["-n", "true"], { stdio: ["ignore", "ignore", "ignore"] });
-		} catch {
-			return resolve(false); // sudo missing: no ticket; runWithSudo reports the hint
-		}
-		proc.on("error", () => resolve(false));
-		proc.on("close", (code) => resolve(code === 0));
-	});
+	// `sudo -n true` can hang under LDAP/SSSD-backed sudoers: the non-interactive
+	// path still consults the auth backend. 5 s is generous for a ticket check
+	// (local PAM answers in ms) and turns a hung probe into "no ticket", which
+	// routes the caller through the password overlay instead of blocking the
+	// card forever. The timer never rejects — it just resolves false.
+	const probe = Promise.withResolvers<boolean>();
+	try {
+		const proc = spawnTool("sudo", ["-n", "true"], { stdio: ["ignore", "ignore", "ignore"] });
+		proc.on("error", () => probe.resolve(false));
+		proc.on("close", (code) => probe.resolve(code === 0));
+	} catch {
+		// sudo missing: no ticket; runWithSudo reports the hint
+		probe.resolve(false);
+	}
+	const timeout = Promise.withResolvers<boolean>();
+	setTimeout(() => timeout.resolve(false), 5_000);
+	return Promise.race([probe.promise, timeout.promise]);
 }
 
 /**

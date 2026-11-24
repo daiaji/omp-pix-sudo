@@ -11,16 +11,11 @@ export { default } from "./extension.ts";
 export { bindHerdrNotify } from "./herdr-notify.ts";
 export {
 	beginAgentActivity,
+	beginAgentBlock,
 	bindAgentStateEvents,
-	getUnattendedMode,
-	hasYoloConsent,
 	type PixAgentState,
 	type PixAgentStateEvent,
 	resetAgentState,
-	resetUnattendedState,
-	setUnattendedMode,
-	setYoloConsent,
-	type UnattendedMode,
 	withAgentBlock,
 } from "./herdr-state.ts";
 export { ioTimeoutMs, ioTimeoutSignal } from "./io.ts";

@@ -7,15 +7,16 @@
  */
 
 import { dirname } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import {
 	Key,
 	type KeybindingsManager,
+	Ellipsis,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+} from "@oh-my-pi/pi-tui";
 import { createBinariesTab } from "./binaries-tab.ts";
 import { icon } from "./icon-catalog.ts";
 import type { PixRuntime } from "./runtime.ts";
@@ -570,7 +571,7 @@ function frameRows(
 		const span = width - 5;
 		if (!opts.title || span < 3) return opts.color(`╭${dashes}╮`);
 		const paint = opts.titleColor ?? opts.color;
-		const label = truncateToWidth(opts.title, span - 1, "…");
+		const label = truncateToWidth(opts.title, span - 1, Ellipsis.Unicode);
 		const tail = "─".repeat(Math.max(1, span - visibleWidth(label)));
 		return `${opts.color("╭─ ")}${paint(label)}${opts.color(` ${tail}╮`)}`;
 	})();
@@ -584,7 +585,7 @@ function frameRows(
 		});
 	};
 	const row = (content: string): string => {
-		const fitted = truncateToWidth(content, inner, "…");
+		const fitted = truncateToWidth(content, inner, Ellipsis.Unicode);
 		const padded = fitted + " ".repeat(Math.max(0, inner - visibleWidth(fitted)));
 		return bg(`${opts.color("│")} ${reassert(padded)} ${opts.color("│")}`);
 	};

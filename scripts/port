@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# port — mechanically re-derive src/ from git-src/ (vendored upstream).
+#
+# Layers (checked in this order):
+#   1. import rewrite  — upstream package specifiers → in-tree relative paths
+#                        and the canonical omp scope.
+#   2. deletion list   — DEAD_FILES: vendored files nothing in the load closure
+#                        imports (verified by following imports from src/index.ts).
+#   3. replacement list — files whose port required substantive edits beyond
+#                        imports (render shapes, host APIs). src/ wins.
+#   4. passthrough     — everything else is copied verbatim from git-src.
+#
+# `scripts/port` writes src/; `scripts/port --check` re-runs the same pipeline
+# into a temp tree and exits 1 if it differs from src/ — run it in CI to prove
+# src/ is fully derived (no hand edits the generator doesn't know about).
+#
+# Upgrade flow: bump upstream.json → scripts/sync-upstream → scripts/port →
+# review diff → bun test && bunx tsc --noEmit → commit.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+CHECK=0
+[[ "${1:-}" == "--check" ]] && CHECK=1
+
+command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
+command -v rsync >/dev/null || { echo "rsync required" >&2; exit 2; }
+
+TMP=""
+cleanup() { [[ -n "$TMP" ]] && rm -rf "$TMP"; }
+trap cleanup EXIT
+
+work() {
+	# Always generate into a temp tree and only then swap into place: the import
+	# rewrite is a sed pass over the whole tree, and running it against the live
+	# src/ would clobber the REPLACED files before they are copied back (this
+	# destroyed src/index.ts once — never again).
+	# NOTE: called as DEST=$(work), i.e. in a subshell — assignments made here
+	# do NOT survive. Keep TMP-set outside this function.
+	echo "$1/src"
+}
+
+TMP=$(mktemp -d)
+DEST=$(work "$TMP")
+
+# ── 1. deletion list ─────────────────────────────────────────────────────────
+# Files vendored from upstream but unreachable from the plugin's load closure
+# (src/index.ts → …). Deleted at port time; recoverable from git-src/.
+DEAD_FILES=(
+	pix-pretty/batch.ts
+	pix-pretty/chips.ts
+	pix-pretty/commands/fff.ts
+	pix-pretty/confirm.ts
+	pix-pretty/diff-render.ts
+	pix-pretty/diff.ts
+	pix-pretty/fff.ts
+	pix-pretty/icon-persist.ts
+	pix-pretty/index.ts
+	pix-pretty/progress.ts
+	pix-pretty/provider-picker.ts
+	pix-pretty/resize.ts
+	pix-pretty/shell-tool.ts
+	pix-pretty/test-utils.ts
+	pix-pretty/tool-status.ts
+	pix-pretty/tools/context.ts
+	pix-pretty/transient-error.ts
+	pix-pretty/types-diff.d.ts
+	pix-pretty/widget-format.ts
+	pix-runtime/audio.ts
+	pix-runtime/binaries/index.ts
+	pix-runtime/os.ts
+	pix-runtime/safe-path.ts
+	pix-runtime/testing.ts
+	pix-runtime/user-shell.ts
+)
+
+# ── 2. import rewrite table ──────────────────────────────────────────────────
+# Order matters: longest specifier first so @xynogen/pix-runtime/config does not
+# match the @xynogen/pix-runtime rule first.
+declare -a SPECIFIER_RULES=(
+	"s|from \"@xynogen/pix-pretty/|from \"./pix-pretty/|g"
+	"s|from \"@xynogen/pix-runtime/|from \"./pix-runtime/|g"
+	"s|from \"@xynogen/pix-pretty\"|from \"./pix-pretty/index.ts\"|g"
+	"s|from \"@xynogen/pix-runtime\"|from \"./pix-runtime/index.ts\"|g"
+	"s|from \"@xynogen/pix-sudo/|from \"./|g"
+	"s|from \"@earendil-works/pi-coding-agent\"|from \"@oh-my-pi/pi-coding-agent\"|g"
+	"s|from \"@earendil-works/pi-tui\"|from \"@oh-my-pi/pi-tui\"|g"
+	"s|from \"@earendil-works/pi-ai\"|from \"@oh-my-pi/pi-ai\"|g"
+	# omp resolves bare extensions itself; explicit .ts keeps bun test + tsc happy
+	"s|from \"\\./pix-pretty/([a-z-]+)\"|from \"./pix-pretty/\\1.ts\"|g"
+	"s|from \"\\./pix-runtime/([a-z-]+)\"|from \"./pix-runtime/\\1.ts\"|g"
+	"s|from \"\\./pix-runtime/binaries/([a-z-]+)\"|from \"./pix-runtime/binaries/\\1.ts\"|g"
+	"s|from \"\\./pix-runtime/sections/([a-z-]+)\"|from \"./pix-runtime/sections/\\1.ts\"|g"
+)
+
+rewrite_imports() {
+	local f=$1
+	for rule in "${SPECIFIER_RULES[@]}"; do
+		sed -i -E "$rule" "$f"
+	done
+}
+
+# ── 3. assembly ──────────────────────────────────────────────────────────────
+mkdir -p "$DEST"
+rm -rf "${DEST:?}"/*
+
+# base: every package's src subtree lands in one tree (pix-sudo's src/index.ts
+# and lib.ts ARE the tree root; runtime and pretty become subdirectories).
+mkdir -p "$DEST"
+rsync -a git-src/pix-sudo/src/    "$DEST/"
+rsync -a git-src/pix-runtime/src/ "$DEST/pix-runtime/"
+rsync -a git-src/pix-pretty/src/  "$DEST/pix-pretty/"
+
+# delete unreachable vendored files
+for dead in "${DEAD_FILES[@]}"; do
+	rm -f "$DEST/$dead"
+done
+rmdir "$DEST/pix-pretty/commands" "$DEST/pix-pretty/tools" 2>/dev/null || true
+
+# rewrite imports in every .ts/.d.ts
+while IFS= read -r -d '' f; do
+	rewrite_imports "$f"
+done < <(find "$DEST" -type f \( -name "*.ts" -o -name "*.d.ts" \) -print0)
+
+# ── 4. replacement list ──────────────────────────────────────────────────────
+# src/ versions that carry substantive port edits (import rewrite alone cannot
+# reproduce them). Each entry names the reason class; see git history of src/.
+REPLACED=(
+	index.ts                # registerTool shape, pi.zod schema, render-time state, dead earendil fields
+	lib.ts                  # abort-listener settle, optional truncated flag, ticket probe timeout
+	pix-runtime/binaries/catalog.ts # sudo knownPaths + NixOS hint
+	pix-runtime/extension.ts        # user_bash not portable under omp; unattended reset dropped
+	pix-runtime/paths.ts            # agentDir falls back to ~/.omp/agent when it exists (omp host)
+	pix-runtime/herdr-state.ts      # HostEventBus instead of host EventBus import; yolo/afk removed
+	pix-runtime/herdr-notify.ts     # HostEventBus
+	pix-runtime/index.ts            # re-export surface trimmed to used names
+	pix-runtime/collapse.ts         # managed CollapseTimers instead of raw setTimeout
+	pix-runtime/icon-catalog.ts     # afk icon dropped (no consumer)
+	pix-runtime/binaries-tab.ts     # Input({prompt}) ctor options → field assign; Ellipsis enum
+	pix-runtime/pix-command.ts      # Ellipsis enum
+	pix-runtime/binaries/ensure.ts  # inline import("node:stream/web") cast
+	pix-pretty/gate-overlay.ts      # OverlayTimers + MaskedInput readonly render
+	pix-pretty/modal-frame.ts       # SelectListTheme.symbols required; ELLIPSIS → Ellipsis.Unicode
+	pix-pretty/renderers.ts         # Ellipsis.Unicode
+	pix-pretty/types.ts             # local stand-ins for absent omp tool-input types; fff-node shim; readonly render
+	pix-pretty/utils.ts             # readonly string[] in frame/render signatures
+	pix-pretty/config.ts            # runtime → sections import paths
+	pix-pretty/icon-catalog.ts      # runtime → icon-catalog import path
+	pix-pretty/fff-node.ts          # NEW: structural stand-ins for the optional @ff-labs/fff-node peer
+	host/host-bus.ts                # NEW: structural type for pi.events (omp does not re-export EventBus)
+)
+
+for rel in "${REPLACED[@]}"; do
+	if [[ -f "src/$rel" ]]; then
+		mkdir -p "$DEST/$(dirname "$rel")"
+		cp "src/$rel" "$DEST/$rel"
+	elif [[ $CHECK -eq 1 ]]; then
+		echo "❌ port --check: replacement listed but missing: src/$rel" >&2
+		exit 1
+	else
+		echo "⚠️  replacement listed but missing: src/$rel" >&2
+	fi
+done
+
+if [[ $CHECK -eq 1 ]]; then
+	if diff -rq "$DEST" src >/dev/null 2>&1; then
+		echo "port --check: src/ is exactly what the generator produces ✅"
+	else
+		echo "❌ port --check: src/ differs from generated tree:" >&2
+		diff -rq "$DEST" src | head -10 >&2
+		exit 1
+	fi
+else
+	# Atomic-ish swap: stage the current src/, move the generated tree in.
+	# mv keeps the directory entry on the same filesystem, so any concurrent
+	# reader either sees the old or the new tree, never a half-written one.
+	mv src "$TMP/src-old"
+	mv "$DEST" src
+	echo "port: regenerated src/ from git-src/ (check the diff, run bun test + bunx tsc --noEmit)."
+fi

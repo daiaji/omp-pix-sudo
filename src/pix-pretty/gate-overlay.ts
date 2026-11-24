@@ -16,7 +16,7 @@
  *   - Single source of truth for the overlay look across pix-gate, pix-sudo, and pix-ssh.
  */
 
-import { Input, type SelectItem, SelectList } from "@earendil-works/pi-tui";
+import { Input, type SelectItem, SelectList } from "@oh-my-pi/pi-tui";
 import {
 	frameModal,
 	MIN_PERMISSION_MODAL_HEIGHT,
@@ -157,7 +157,7 @@ function asPageKeybindings(value: unknown): ModalPageKeybindings | undefined {
 // ── Masked input (● per char) ─────────────────────────────────────────────────
 
 class MaskedInput extends Input {
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		const real = this.getValue();
 		this.setValue("●".repeat(real.length));
 		const lines = super.render(width);

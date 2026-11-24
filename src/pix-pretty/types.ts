@@ -1,18 +1,23 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	BashToolInput,
-	EditToolInput,
 	ExtensionCommandContext,
 	ExtensionContext,
-	FindToolInput,
-	GrepToolInput,
-	LsToolInput,
 	ReadToolInput,
 	WriteToolInput,
-} from "@earendil-works/pi-coding-agent";
-import type { FileFinder } from "@ff-labs/fff-node";
+} from "@oh-my-pi/pi-coding-agent";
+import type { FffFinder, FffModule } from "./fff-node.ts";
+
+// omp 19.1.1 只导出 Read/Bash/Write/Grep 的 input 类型（src/tools/*.ts）；
+// Edit 的输入是三态联合、没有 EditToolInput 名字，Ls/Glob 合并成 GlobToolInput。
+// 上游 @earendil-works 有 EditToolInput / LsToolInput，这里给结构等价的本地
+// 别名（这些工厂只被 PiPrettySdk 元数据引用，不参与运行期）。
+type EditToolInput = { path: string; oldText?: string; newText?: string; edits?: unknown };
+type LsToolInput = { path: string; ignore?: string[] };
+type FindToolInput = { pattern: string; path?: string };
+type GrepToolInput = { pattern: string; path?: string };
 
 // We keep the original shiki-shaped types as plain string aliases so the
 // language map and function signatures stay 1:1 with upstream pi-pretty.
@@ -50,7 +55,8 @@ export type ToolResultLike<TDetails = unknown> = AgentToolResult<TDetails | unde
 export type TextComponentLike = {
 	setText(value: string): void;
 	getText?: () => string;
-	render?: (width: number) => string[];
+	// omp 19.1.1 的 `Text.render` 返回 `readonly string[]`（pi-tui text.ts:144）。
+	render?: (width: number) => readonly string[];
 	invalidate?: () => void;
 };
 
@@ -123,9 +129,9 @@ export type PiPrettyApi = {
 	) => void;
 };
 
-export type OptionalFffModule = { FileFinder: typeof FileFinder };
+export type OptionalFffModule = FffModule;
 
-export type FffBackedFinder = FileFinder;
+export type FffBackedFinder = FffFinder;
 
 export type ReadParams = ReadToolInput;
 

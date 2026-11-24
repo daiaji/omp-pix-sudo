@@ -9,6 +9,7 @@
  * which silently turned `HOME ?? ""` paths into cwd-relative ones.
  */
 
+import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,10 +35,21 @@ export function expandHome(path: string, env: NodeJS.ProcessEnv = process.env): 
 	return path;
 }
 
-/** Pi agent dir: `PI_CODING_AGENT_DIR` (tilde-expanded) or `~/.pi/agent`. */
+/**
+ * Agent dir, in omp-host priority order:
+ *   1. `PI_CODING_AGENT_DIR` (tilde-expanded) — explicit override;
+ *   2. `~/.omp/agent` when it exists — omp's default agent dir (omp sets the env
+ *      var only with profiles or --agent-dir; the plain process doesn't, so the
+ *      fallback keeps `/pix` state in the tree omp actually reads);
+ *   3. `~/.pi/agent` — upstream Pi layout (final fallback).
+ */
 export function agentDir(env: NodeJS.ProcessEnv = process.env): string {
 	const override = env.PI_CODING_AGENT_DIR;
 	if (override) return expandHome(override, env);
+	if (env.HOME) {
+		const ompDir = join(homeDir(env), ".omp", "agent");
+		if (existsSync(ompDir)) return ompDir;
+	}
 	return join(homeDir(env), ".pi", "agent");
 }
 

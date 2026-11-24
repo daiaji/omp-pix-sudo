@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# sync-upstream — download the tarballs pinned in upstream.json, verify sha256,
+# and extract each package's src/ into git-src/ (upstream-verbatim reference).
+#
+# Usage: scripts/sync-upstream [--check]
+#   --check  verify the checked-in git-src/ matches upstream.json's pins
+#            (hashes re-verified, tree diffed) without writing anything.
+#
+# git-src/ is a REFERENCE copy, not runtime code: src/ is generated from it by
+# scripts/port. Do not hand-edit git-src/.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+CHECK=0
+[[ "${1:-}" == "--check" ]] && CHECK=1
+
+command -v curl >/dev/null || { echo "curl required" >&2; exit 2; }
+command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail=0
+count=$(jq '.packages | length' upstream.json)
+for i in $(seq 0 $((count - 1))); do
+	name=$(jq -r ".packages[$i].name" upstream.json)
+	version=$(jq -r ".packages[$i].version" upstream.json)
+	url=$(jq -r ".packages[$i].tarball" upstream.json)
+	want=$(jq -r ".packages[$i].sha256" upstream.json)
+	strip=$(jq -r ".packages[$i].stripPrefix" upstream.json)
+	dest=$(jq -r ".packages[$i].extractTo" upstream.json)
+
+	short="${name##*/}-${version}"
+	tgz="$tmp/${short//\//_}.tgz"
+	got=$(curl -fsSL --max-time 120 "$url" | tee "$tgz" | sha256sum | cut -d' ' -f1)
+	if [[ "$got" != "$want" ]]; then
+		echo "❌ $name@$version: sha256 mismatch"
+		echo "   want $want"
+		echo "   got  $got"
+		fail=1
+		continue
+	fi
+	echo "✅ $name@$version sha256 ok"
+
+	if [[ $CHECK -eq 1 ]]; then
+		# Diff what upstream pins against the checked-in git-src copy.
+		# Compare only the src/ subtree: git-src intentionally drops
+		# package.json/LICENSE (repo root carries ours) and keeps extra docs.
+		stripped="$tmp/${short//\//_}"
+		tar -xzf "$tgz" -C "$stripped" 2>/dev/null || { mkdir -p "$stripped"; tar -xzf "$tgz" -C "$stripped"; }
+		if [[ -d "$stripped/$strip" ]]; then
+			inner="$stripped/$strip"
+		else
+			inner="$stripped"
+		fi
+		srcdir=$(jq -r ".packages[$i].srcSubdir" upstream.json)
+		if [[ ! -d "$dest/$srcdir" ]]; then
+			echo "❌ $dest/$srcdir missing in checkout"
+			fail=1
+			continue
+		fi
+		if ! diff -rq "$inner/$srcdir" "$dest/$srcdir" >/dev/null 2>&1; then
+			echo "❌ $dest/$srcdir differs from upstream tarball — rerun without --check to refresh"
+			diff -rq "$inner/$srcdir" "$dest/$srcdir" | head -5
+			fail=1
+		else
+			echo "✅ $dest/$srcdir matches upstream"
+		fi
+		continue
+	fi
+
+	mkdir -p "$dest"
+	tar -xzf "$tgz" -C "$tmp"
+	# npm tarballs root everything under package/
+	if [[ -d "$tmp/package" ]]; then
+		rsync -a --delete "$tmp/package/" "$dest/"
+	else
+		rsync -a --delete "$tmp/" "$dest/"
+	fi
+	echo "✅ extracted → $dest"
+done
+
+if [[ $CHECK -eq 1 ]]; then
+	echo "check: git-src vs upstream.json → $([[ $fail -eq 0 ]] && echo OK || echo FAILED)"
+	exit $fail
+fi
+
+echo "sync: done. Next: scripts/port, then review diff."
