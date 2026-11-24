@@ -228,7 +228,7 @@ truncation, collapsed rendering — is preserved.
 
 ## Tested in
 
-**omp 19.1.1** (2026-11-24, `0.3.31-omp.3`):
+**omp 19.1.1** (2026-11-24, `0.3.31-omp.4`):
 
 - Type gate: `bunx tsc --noEmit` against the pinned `@oh-my-pi/*@19.1.1`
   declarations → **0 errors**. This is the API contract, not a claim — three
@@ -242,11 +242,16 @@ truncation, collapsed rendering — is preserved.
   `checks.omp-pix-sudo-load` (paired: control run must NOT list it).
 - Print mode → the tool returns `isError: true` with `errorKind: "no-ui"`,
   confirming the non-interactive guard.
-- **TUI overlay pass** (real terminal, same day): Allow/Deny modal renders,
-  masked password input accepts keystrokes and validates, first `sudo_run id`
-  returns `uid=0(root)`, an immediate repeat still shows Allow but skips the
-  password, and after `sudo -K` the password prompt comes back. The
+- **TUI overlay pass** (real terminal, same day, `0.3.31-omp.3`): Allow/Deny
+  modal renders, masked password input accepts keystrokes and validates, first
+  `sudo_run id` returns `uid=0(root)`, an immediate repeat still shows Allow but
+  skips the password, and after `sudo -K` the password prompt comes back. The
   60-second dead-man's switch and the collapsed result row were present too.
+- **Session grant** (`0.3.31-omp.4`): unit-tested window/expiry/revoke
+  (`test/grant.test.ts`); the three-choice overlay and the "grant skips confirm,
+  password still governed by the sudo ticket" path need the same manual TUI
+  pass — pick "Allow for 15 min" once, confirm the following `sudo_run` calls
+  show no modal, then `sudo -K` and confirm the password prompt returns.
 
 Earlier: verified 2026-10-02 against omp 18.4.10 (`omp plugin link` exit 0, no
 loader error) and 2026-10-03 against omp 18.4.11 (**0.3.31-omp.2** below).
@@ -258,6 +263,33 @@ nixos_data pins) the credential cache is keyed by `u.ppid`
 Observed: `-k` in a terminal did not make the next `sudo_run` ask for a
 password; `-K` removes every cached credential for the user regardless of
 ppid (`man sudo`) and does.
+
+## 0.3.31-omp.4 — session grant for root approval
+
+Operating a machine means dozens of root commands in a row; one click per
+command is not usable. The Allow overlay now offers three scopes:
+
+| Choice | Effect |
+| --- | --- |
+| Allow once | runs this command only (previous behavior) |
+| Allow for 15 min | auto-approves `sudo_run` for a **rolling** 15-minute window |
+| Deny | blocks the command |
+
+The grant is deliberately narrow (`src/grant.ts`):
+
+- **in-memory only**, scoped to the omp process, revoked on `session_shutdown`;
+- each command executed under the grant extends the window (rolling, matching
+  sudo's default `timestamp_timeout` semantics);
+- **it never widens authentication** — `hasValidTicket()` still runs on every
+  call, so `sudo -K` or ticket expiry brings the password prompt back while the
+  grant is live. The grant only removes the per-command *confirmation*;
+- nothing is written to disk and there is no config switch: a human picks it
+  per session, in the overlay;
+- when the grant is live and the ticket is still valid, the command runs
+  without any modal; when the ticket is gone, only the password stage shows.
+
+Overlay plumbing: `OverlayResult.choice` + `approveValues` let one approval
+carry a scope, so "Allow once" and "Allow for 15 min" stay distinguishable.
 
 ## 0.3.31-omp.3 — host-version gate, dead code, NixOS integration
 
@@ -345,7 +377,7 @@ omp loads it from a store path via `~/.omp/agent/config.yml`:
 
 ```nix
 # nixos_data/flake.nix inputs:
-omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.3";
+omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.4";
 # nixos_data/omp-pix-sudo.nix: home-manager writes config.yml with
 #   extensions: [ "${inputs.omp-pix-sudo.packages.<system>.default}/share/omp-pix-sudo/src/index.ts" ]
 ```
@@ -358,7 +390,7 @@ in nixos_data).
 From Git (manual, legacy):
 
 ```bash
-omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.3
+omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.4
 ```
 
 Use an immutable tag or commit for reproducible installs — the release tag

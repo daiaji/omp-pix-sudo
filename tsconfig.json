@@ -15,5 +15,5 @@
 			"@earendil-works/pi-tui": ["./node_modules/@oh-my-pi/pi-tui"]
 		}
 	},
-	"include": ["src/**/*.ts", "src/**/*.d.ts"]
+	"include": ["src/**/*.ts", "src/**/*.d.ts", "test/**/*.ts"]
 }

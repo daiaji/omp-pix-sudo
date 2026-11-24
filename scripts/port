@@ -148,6 +148,7 @@ REPLACED=(
 	pix-pretty/icon-catalog.ts      # runtime → icon-catalog import path
 	pix-pretty/fff-node.ts          # NEW: structural stand-ins for the optional @ff-labs/fff-node peer
 	host/host-bus.ts                # NEW: structural type for pi.events (omp does not re-export EventBus)
+	grant.ts                        # NEW: session-scoped root approval grant (rolling 15 min)
 )
 
 for rel in "${REPLACED[@]}"; do

@@ -38,6 +38,12 @@ export interface OverlayResult {
 	password?: string;
 	/** True when password validation exhausted every allowed attempt. */
 	passwordAttemptsExhausted?: boolean;
+	/**
+	 * Value of the choice the user approved with. Lets a caller offer more than
+	 * one approval scope ("Allow once" vs "Allow for 15 min") without guessing
+	 * from the label. Absent on deny/timeout.
+	 */
+	choice?: string;
 }
 
 export interface OverlayChoice {
@@ -74,6 +80,12 @@ interface BaseConfig {
 	choices?: OverlayChoice[];
 	/** Which choice value means "approved". Default "yes". */
 	approveValue?: string;
+	/**
+	 * Additional choice values that also mean "approved" (e.g. a session-grant
+	 * option). The approved choice's value comes back as {@link OverlayResult.choice},
+	 * so the caller can tell the scopes apart.
+	 */
+	approveValues?: string[];
 }
 
 export interface ConfirmConfig extends BaseConfig {
@@ -287,7 +299,7 @@ export function showOverlay(
 ): Promise<OverlayResult> {
 	const accent = config.accent ?? "accent";
 	const choices = config.choices ?? DEFAULT_CHOICES;
-	const approveVal = config.approveValue ?? "yes";
+	const approveVals = new Set([config.approveValue ?? "yes", ...(config.approveValues ?? [])]);
 
 	return new Promise((resolve) => {
 		ui.custom<OverlayResult>(
@@ -295,6 +307,8 @@ export function showOverlay(
 				const pageKeybindings = asPageKeybindings(kb);
 				type Stage = "select" | "password";
 				let stage: Stage = "select";
+				/** Approve-scope value picked in the select stage (carried into the result). */
+				let pickedChoice: string | undefined;
 				let countdownLine: string | undefined;
 				let passwordStatus: string | undefined;
 				let passwordAttempts = 0;
@@ -356,20 +370,23 @@ export function showOverlay(
 
 				// ── event wiring ─────────────────────────────────────────────────
 				selectList.onSelect = (item) => {
-					if (item.value !== approveVal) {
+					if (!approveVals.has(item.value)) {
 						finish({ action: "denied" });
 					} else if (config.mode === "sudo") {
+						// Password stage follows; remember the scope the user picked
+						// so the approved result carries it.
+						pickedChoice = item.value;
 						stage = "password";
 						tui.requestRender();
 					} else {
-						finish({ action: "approved" });
+						finish({ action: "approved", choice: item.value });
 					}
 				};
 				selectList.onCancel = () => finish({ action: "denied" });
 
 				maskedInput.onSubmit = async (pw) => {
 					if (config.mode !== "sudo" || !config.validatePassword) {
-						finish({ action: "approved", password: pw });
+						finish({ action: "approved", password: pw, choice: pickedChoice });
 						return;
 					}
 					if (!pw.trim() || validatingPassword) return;
@@ -380,14 +397,14 @@ export function showOverlay(
 					const valid = await config.validatePassword(pw);
 					validatingPassword = false;
 					if (valid) {
-						finish({ action: "approved", password: pw });
+						finish({ action: "approved", password: pw, choice: pickedChoice });
 						return;
 					}
 
 					passwordAttempts += 1;
 					const maxAttempts = config.maxPasswordAttempts ?? 3;
 					if (passwordAttempts >= maxAttempts) {
-						finish({ action: "approved", password: pw, passwordAttemptsExhausted: true });
+						finish({ action: "approved", password: pw, passwordAttemptsExhausted: true, choice: pickedChoice });
 						return;
 					}
 					maskedInput.setValue("");

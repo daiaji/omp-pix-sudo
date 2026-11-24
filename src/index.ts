@@ -45,6 +45,7 @@ import {
 	unframeToolResult,
 } from "./pix-pretty/utils.ts";
 import { withAgentBlock } from "./pix-runtime/index.ts";
+import { extendGrant, grantActive, revokeGrant, SESSION_GRANT_CHOICE } from "./grant.ts";
 import { type CollapseState, type CollapseTimers, tickCollapse } from "./pix-runtime/collapse.ts";
 import {
 	detectAuthFailure,
@@ -60,6 +61,23 @@ import {
 // first keypress cancels it, so it only fires when the user is truly away.
 const ROOT_PROMPT_TIMEOUT_MS = 60_000;
 const MAX_PASSWORD_ATTEMPTS = 3;
+
+/**
+ * Approval scopes offered on every root request.
+ *
+ * "Allow for 15 min" widens the confirm layer for a rolling window (see
+ * grant.ts). It never widens authentication: the password is still required
+ * whenever the sudo ticket is missing or expired.
+ */
+const ROOT_CHOICES = [
+	{ value: "yes", label: "Allow once", description: "Run only this command" },
+	{
+		value: SESSION_GRANT_CHOICE,
+		label: "Allow for 15 min",
+		description: "Auto-approve root commands for 15 rolling minutes (sudo password still applies)",
+	},
+	{ value: "no", label: "Deny", description: "Block the command" },
+];
 
 /**
  * Parameter schema, hoisted to module level.
@@ -356,7 +374,13 @@ export default function (pi: ExtensionAPI): void {
 			let noBinaryMessage: string | undefined;
 
 			// ── Confirm (+ validate password inside the same open overlay) ───────
-			const overlayResult = await withAgentBlock(
+			// A live session grant skips the confirm layer but never the password:
+			// the sudo ticket is still consulted, so `sudo -K` or ticket expiry
+			// brings the password prompt back while the grant is active.
+			const granted = grantActive();
+			const overlayResult: OverlayResult = granted && cached
+				? { action: "approved", choice: "granted" }
+				: await withAgentBlock(
 				pi.events,
 				"sudo_run",
 				"Root approval required",
@@ -368,13 +392,13 @@ export default function (pi: ExtensionAPI): void {
 								mode: "confirm",
 								icon: icon("lock"),
 								title: "Root Command Request",
-								body: [...body, "(sudo session active — no password needed)"],
+								body: granted
+									? [...body, "(auto-approval active — no password needed)"]
+									: [...body, "(sudo session active — no password needed)"],
 								accent: "error",
 								timeoutMs: ROOT_PROMPT_TIMEOUT_MS,
-								choices: [
-									{ value: "yes", label: "Allow", description: "Run the command" },
-									{ value: "no", label: "Deny", description: "Block the command" },
-								],
+								choices: ROOT_CHOICES,
+								approveValues: [SESSION_GRANT_CHOICE],
 							},
 							ctx,
 						);
@@ -412,23 +436,29 @@ export default function (pi: ExtensionAPI): void {
 									return true;
 								}
 							},
-							choices: [
-								{
-									value: "yes",
-									label: "Allow — enter password",
-									description: "Proceed to password prompt",
-								},
-								{
-									value: "no",
-									label: "Deny — block command",
-									description: "Prevent this command from running",
-								},
-							],
+							choices: granted
+								? [
+										{ value: "yes", label: "Allow — enter password", description: "Proceed to password prompt" },
+										{ value: "no", label: "Deny — block command", description: "Prevent this command from running" },
+									]
+								: ROOT_CHOICES,
+							approveValues: [SESSION_GRANT_CHOICE],
 						},
 						ctx,
 					);
 				},
 			);
+
+			if (overlayResult.choice === SESSION_GRANT_CHOICE) {
+				extendGrant();
+				ctx.ui.notify(
+					"🔐 Root commands auto-approved for 15 min. The sudo password is still required once its ticket expires; `sudo -K` forces it immediately.",
+					"warning",
+				);
+			} else if (granted) {
+				// Rolling window: every command executed under the grant extends it.
+				extendGrant();
+			}
 
 			// Cached ticket needs no password; otherwise a blank password is a cancel.
 			const missingPassword = !cached && !overlayResult.password?.trim();
@@ -714,5 +744,11 @@ export default function (pi: ExtensionAPI): void {
 			text.setText(fillToolBackground(out.join("\n")));
 			return text;
 		}) as never,
+	});
+
+	// The grant is process-local state; end it with the session rather than
+	// relying on the process exiting (extensions can be reloaded in-process).
+	pi.on("session_shutdown", () => {
+		revokeGrant();
 	});
 }
