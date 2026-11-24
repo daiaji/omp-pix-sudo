@@ -372,6 +372,9 @@ export default function (pi: ExtensionAPI): void {
 			// Set when `spawnSudo` could not resolve the sudo binary at all; takes
 			// priority over `executionError` in the failure report below.
 			let noBinaryMessage: string | undefined;
+			// Last stderr from a non-zero `sudo -S -v`, shown when attempts run out so
+			// a policy problem is distinguishable from a mistyped password.
+			let authDiagnostic = "";
 
 			// ── Confirm (+ validate password inside the same open overlay) ───────
 			// A live grant (necessarily backed by a valid ticket, see above) skips
@@ -412,14 +415,17 @@ export default function (pi: ExtensionAPI): void {
 							maxPasswordAttempts: MAX_PASSWORD_ATTEMPTS,
 							validatePassword: async (password) => {
 								try {
+									// `sudo -S -v` exit status IS the verdict: 0 = this password
+									// authenticated, non-zero = it did not. Classification must
+									// not read the message text — sudo/PAM localize it, and a
+									// localized "sorry, try again" used to be treated as a fatal
+									// sudo error, ending the modal after one wrong attempt.
+									// (The probe runs under LC_ALL=C; the diagnostic kept here is
+									// for the exhausted report, not for branching.)
 									const validation = await validateSudoPassword(password, signal);
-									if (detectAuthFailure(validation.code, validation.stderr)) return false;
-									if (validation.code !== 0) {
-										executionError = new Error(
-											validation.stderr || "sudo password validation failed",
-										);
-									}
-									return true;
+									if (validation.code === 0) return true;
+									authDiagnostic = validation.stderr.trim();
+									return false;
 								} catch (err) {
 									// Distinguish "sudo binary missing" from "password wrong":
 									// a sanitize-PATH launch (systemd unit, .desktop wrapper)
@@ -557,6 +563,7 @@ export default function (pi: ExtensionAPI): void {
 				overlayResult.passwordAttemptsExhausted ||
 				detectAuthFailure(result.code, result.stderr)
 			) {
+				const detail = authDiagnostic || result.stderr.trim();
 				ctx.ui.notify(
 					`🔐 sudo authentication failed after ${MAX_PASSWORD_ATTEMPTS} attempts`,
 					"error",
@@ -565,7 +572,10 @@ export default function (pi: ExtensionAPI): void {
 					content: [
 						{
 							type: "text",
-							text: `sudo authentication failed after ${MAX_PASSWORD_ATTEMPTS} attempts — wrong password.`,
+							text:
+								`sudo authentication failed after ${MAX_PASSWORD_ATTEMPTS} attempts.` +
+								(detail ? `
+${detail}` : ""),
 						},
 					],
 					details: makeDetails(command, reason, {

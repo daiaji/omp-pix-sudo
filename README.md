@@ -228,7 +228,7 @@ truncation, collapsed rendering — is preserved.
 
 ## Tested in
 
-**omp 19.1.1** (2026-11-24, `0.3.31-omp.6`):
+**omp 19.1.1** (2026-11-24, `0.3.31-omp.7`):
 
 - Type gate: `bunx tsc --noEmit` against the pinned `@oh-my-pi/*@19.1.1`
   declarations → **0 errors**. This is the API contract, not a claim — three
@@ -291,6 +291,32 @@ The grant is deliberately narrow (`src/grant.ts`):
 
 Overlay plumbing: `OverlayResult.choice` + `approveValues` let one approval
 carry a scope, so "Allow once" and "Allow for 15 min" stay distinguishable.
+
+## 0.3.31-omp.7 — wrong-password retries on localized hosts
+
+Reported on a zh_CN host: one wrong password ended the modal with
+`sudo_run failed: [sudo] daiaji 的密码：对不起，请重试。` instead of retrying.
+`MAX_PASSWORD_ATTEMPTS` was always 3 — the classification was locale-broken:
+
+- `detectAuthFailure` matched English words only, so the localized
+  "对不起，请重试。" was read as a **fatal sudo error**: the plugin returned
+  "approved", closed the modal and surfaced `executionError`.
+- the prompt filter matched `[sudo] password`, so localized prompts leaked into
+  stderr and appeared verbatim in the error card.
+
+Fixes:
+
+- **the verdict is the exit status** of `sudo -S -v` (0 = authenticated,
+  non-zero = retry). No message matching decides whether to retry; the last
+  diagnostic is kept and shown only when attempts run out, so a policy problem
+  ("not in the sudoers file") stays distinguishable from a typo.
+- the probe runs with `LC_ALL=C` / `LANG=C`, so its own diagnostics are stable
+  English; the requested command keeps the user's locale.
+- prompt filtering strips `[sudo] …:` in any locale (ASCII and full-width
+  colons) and is applied to the **whole** stderr instead of per chunk — a chunk
+  boundary could previously split a prompt and leak it, or glue it onto the
+  following line.
+- tests: en/zh stderr fixtures (`test/lib.test.ts`); 20 tests total.
 
 ## 0.3.31-omp.6 — wrong-password feedback
 
@@ -411,7 +437,7 @@ omp loads it from a store path via `~/.omp/agent/config.yml`:
 
 ```nix
 # nixos_data/flake.nix inputs:
-omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.6";
+omp-pix-sudo.url = "tarball+https://codeload.github.com/daiaji/omp-pix-sudo/tar.gz/refs/tags/v0.3.31-omp.7";
 # nixos_data/omp-pix-sudo.nix: home-manager writes config.yml with
 #   extensions: [ "${inputs.omp-pix-sudo.packages.<system>.default}/share/omp-pix-sudo/src/index.ts" ]
 ```
@@ -424,7 +450,7 @@ in nixos_data).
 From Git (manual, legacy):
 
 ```bash
-omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.6
+omp install github:daiaji/omp-pix-sudo#v0.3.31-omp.7
 ```
 
 Use an immutable tag or commit for reproducible installs — the release tag

@@ -1,6 +1,6 @@
 {
 	"name": "omp-pix-sudo",
-	"version": "0.3.31-omp.6",
+	"version": "0.3.31-omp.7",
 	"private": true,
 	"type": "module",
 	"description": "pix-sudo (`sudo_run` tool) ported from @xynogen/pix-sudo@0.3.31 to omp 19.1.1, with pix-runtime and pix-pretty vendored in-tree.",

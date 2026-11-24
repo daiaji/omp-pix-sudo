@@ -33,11 +33,21 @@ export function truncate(
 
 // ── sudo stderr filter ───────────────────────────────────────────────────────
 
-/** Strip the "[sudo] password for …:" prompt lines that sudo writes to stderr. */
+/**
+ * Strip sudo's password prompt from stderr.
+ *
+ * The prompt is localized ("[sudo] password for u: ", "[sudo] u 的密码："), so
+ * this matches the `[sudo] …:` prefix rather than English words — matching the
+ * English text leaked the prompt into error output and, worse, made a localized
+ * "sorry, try again" look like a fatal sudo error.
+ */
 export function filterSudoPrompt(raw: string): string {
 	return raw
+		// ASCII ":" (C/en locale) and full-width "：" (zh/ja translations).
+		.replace(/\[sudo\][^\n:：]*[:：]\s?/g, "")
 		.split("\n")
-		.filter((l) => !/^\[sudo\] password/i.test(l))
+		.map((line) => line.trimEnd())
+		.filter((line) => line.length > 0)
 		.join("\n");
 }
 
@@ -68,7 +78,10 @@ export interface SudoResult {
  * does not display "Checking password…" for the command's full runtime.
  */
 export function validateSudoPassword(password: string, signal?: AbortSignal): Promise<SudoResult> {
-	return spawnSudo(["-S", "-v"], password, signal);
+	// Force the C locale for the probe: sudo and PAM localize their diagnostics,
+	// and this call's stderr is parsed (retry vs. structural failure) and shown
+	// to the user. The requested command keeps the user's locale.
+	return spawnSudo(["-S", "-v"], password, signal, { LC_ALL: "C", LANG: "C" });
 }
 
 /**
@@ -110,12 +123,23 @@ export function runWithSudo(
 	return spawnSudo(["-S", "--", "sh", "-c", command], password, signal);
 }
 
-function spawnSudo(args: string[], password: string, signal?: AbortSignal): Promise<SudoResult> {
+function spawnSudo(
+	args: string[],
+	password: string,
+	signal?: AbortSignal,
+	extraEnv?: NodeJS.ProcessEnv,
+): Promise<SudoResult> {
 	return new Promise((resolve, reject) => {
-		const proc = spawnTool("sudo", args, { stdio: ["pipe", "pipe", "pipe"] });
+		const proc = spawnTool("sudo", args, {
+			stdio: ["pipe", "pipe", "pipe"],
+			...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+		});
 
 		let stdout = "";
-		let stderr = "";
+		// Keep stderr raw until the process ends: the prompt filter is line-based,
+		// and filtering per chunk can split a prompt across two chunks and leak it
+		// (or glue it onto the following diagnostic).
+		const stderrChunks: string[] = [];
 
 		// `once` only fires the listener when the abort actually happens. On the
 		// normal path the listener would otherwise stay attached to the caller's
@@ -141,12 +165,13 @@ function spawnSudo(args: string[], password: string, signal?: AbortSignal): Prom
 		});
 
 		proc.stderr.on("data", (chunk: Buffer) => {
-			const filtered = filterSudoPrompt(chunk.toString());
-			if (filtered) stderr += filtered;
+			stderrChunks.push(chunk.toString());
 		});
 
 		proc.on("error", settle(reject));
-		proc.on("close", settle((code: number | null) => resolve({ stdout, stderr, code: code ?? 1 })));
+		proc.on("close", settle((code: number | null) =>
+			resolve({ stdout, stderr: filterSudoPrompt(stderrChunks.join("")), code: code ?? 1 }),
+		));
 
 		proc.stdin.write(`${password}\n`);
 		proc.stdin.end();
